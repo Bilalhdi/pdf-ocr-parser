@@ -6,8 +6,8 @@
 
   ],
   "routes": [
-    { "src": "/(.*)", "dest": "src/geminiparallel.py" }
-    { "src": "/(.*)", "dest": "src/ocr_extract.py" }
+    { "src": "/(.*)", "dest": "src/geminiparallel.py"}
+    { "src": "/(.*)", "dest": "src/ocr_extract.py"}
 
   ]
 }
