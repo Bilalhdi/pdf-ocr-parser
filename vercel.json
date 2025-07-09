@@ -9,7 +9,7 @@
   "routes": [
     {
       "src": "/parse",
-      "methods": ["GET", "POST"],
+      "methods": ["GET","POST"],
       "dest": "src/finalparse.py"
     }
   ]
