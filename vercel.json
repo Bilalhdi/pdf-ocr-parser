@@ -1,9 +1,13 @@
 {
   "version": 2,
   "builds": [
-    { "src": "api/index.py", "use": "@vercel/python" }
+    { "src": "src/geminiparallel.py", "use": "@vercel/python" }
+    { "src": "src/ocr_extract.py", "use": "@vercel/python" }
+
   ],
   "routes": [
-    { "src": "/(.*)", "dest": "api/index.py" }
+    { "src": "/(.*)", "dest": "src/geminiparallel.py" }
+    { "src": "/(.*)", "dest": "src/ocr_extract.py" }
+
   ]
 }
