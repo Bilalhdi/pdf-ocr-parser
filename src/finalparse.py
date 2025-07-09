@@ -1,23 +1,17 @@
 import os
-import re
-from flask import Flask, request, jsonify, abort
+from flask import Flask, request, jsonify, abort, Response
 import pdfplumber
 import pytesseract
-from PIL import Image
 import google.generativeai as genai
 from dotenv import load_dotenv, find_dotenv
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── CONFIG ────────────────────────────────────────────────────────────────────
-load_dotenv()
-# find_dotenv will walk up from cwd until it finds a .env file
 dotenv_path = find_dotenv()
-print("⮕ looking for .env in:", os.getcwd())
-print("⮕ find_dotenv():", dotenv_path)
-
 if not dotenv_path:
-    raise RuntimeError("❌  Couldn't find a .env file anywhere in this tree")
+    raise RuntimeError("❌ Couldn't find a .env file anywhere in this tree")
 load_dotenv(dotenv_path)
+
 FLASK_API_KEY   = os.getenv("FLASK_API_KEY")
 GEMINI_API_KEY  = os.getenv("GEMINI_API_KEY")
 TESSERACT_CMD   = os.getenv("TESSERACT_CMD")
@@ -32,6 +26,9 @@ pytesseract.pytesseract.tesseract_cmd = TESSERACT_CMD
 genai.configure(api_key=GEMINI_API_KEY)
 
 app = Flask(__name__)
+
+# holds the last parsed output in memory
+parsed_output = None
 
 def require_api_key(f):
     def wrapper(*args, **kwargs):
@@ -65,10 +62,10 @@ def extract_schema(fragment: str) -> str:
 def gemini_raw(chunk: str, schema: str) -> str:
     prompt = (
         "Use this JSON schema (keys only, all values=null) for your output:\n"
-        + schema
-        + "\n\nIgnore any \\n parsed through in between words that don't make sense like Se\\np. "
+        + schema +
+        "\n\nIgnore any \\n parsed through in between words that don't make sense like Se\\np. "
         "Now parse ONLY this invoice fragment into that schema (fill in the values):\n\n"
-        + chunk 
+        + chunk
     )
     model = genai.GenerativeModel(
         model_name="gemini-2.0-flash",
@@ -97,21 +94,33 @@ def ocr_pdf(file_stream) -> str:
             pages.append(pytesseract.image_to_string(img))
     return "\n".join(pages)
 
-@app.route("/parse", methods=["POST"])
+@app.route("/parse", methods=["GET", "POST"])
 @require_api_key
 def parse_pdf():
+    global parsed_output
+
+    if request.method == "GET":
+        if not parsed_output:
+            abort(404, "No parsed output available yet")
+        # return the last parsed text as plain text
+        return Response(parsed_output, mimetype="text/plain")
+
+    # POST: user uploads a PDF
     if "file" not in request.files:
         abort(400, "No file part")
     file = request.files["file"]
     if file.filename == "" or not allowed_file(file.filename):
         abort(400, "No selected PDF file")
+
     # 1) OCR
     raw_text = ocr_pdf(file.stream)
+
     # 2) Chunk + schema
     chunks = list(chunk_with_overlap(raw_text, CHUNK_SIZE, OVERLAP))
     if not chunks:
         abort(500, "Failed to extract any text")
     schema = extract_schema(chunks[0])
+
     # 3) Fill each chunk in parallel
     outputs = [None] * len(chunks)
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as exe:
@@ -120,12 +129,19 @@ def parse_pdf():
             idx = futures[fut]
             try:
                 outputs[idx] = fut.result()
-            except Exception as e:
+            except Exception:
                 outputs[idx] = ""
+
     # 4) Footer
     footer_json = extract_footer(chunks[-1])
-    # 5) Combine
+
+    # 5) Combine into one string
     combined = "\n\n".join(outputs) + "\n\n// —— Footer summary ——\n" + footer_json
+
+    # store for later GET
+    parsed_output = combined
+
+    # also return it in the POST response
     return jsonify({"parsed": combined})
 
 if __name__ == "__main__":
